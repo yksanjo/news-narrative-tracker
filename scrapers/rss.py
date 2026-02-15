@@ -1,122 +1,121 @@
 """
-RSS News Scraper
+RSS Feed Aggregator
 
-Fetches articles from RSS feeds of major news sources.
+Aggregates news from RSS feeds.
 """
 
 import asyncio
 import feedparser
 from datetime import datetime
 from typing import Optional
-
-from pydantic import BaseModel, FieldArticle(BaseModel):
-    """A news
+from pydantic import BaseModel, Field
 
 
-class News article from RSS"""
+class Article(BaseModel):
+    """News article"""
     title: str
-    summary: str
     link: str
-    published: str
-    source: str
-    scraped_at: datetime = Field(default_factory=datetime.now)
-    
-    def to_dict(self):
-        return {
-            "title": self.title,
-            "summary": self.summary,
-            "link": self.link,
-            "published": self.published,
-            "source": self.source,
-            "scraped_at": self.scraped_at.isoformat()
-        }
+    published: str = ""
+    summary: str = ""
+    source: str = ""
+    author: str = ""
+    tags: list[str] = Field(default_factory=list)
+    sentiment: Optional[float] = None
 
 
-class RSSScraper:
-    """Scraper for RSS feeds"""
+class RSSAggregator:
+    """RSS feed aggregator"""
     
-    # Major news RSS feeds
     FEEDS = {
-        "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml",
-        "reuters": "https://feeds.reuters.com/reuters/topNews",
-        "npr": "https://feeds.npr.org/1001/rss.xml",
         "techcrunch": "https://techcrunch.com/feed/",
-        "hackernews": "https://hnrss.org/frontpage",
+        "ycombinator": "https://news.ycombinator.com/rss",
+        "verge": "https://www.theverge.com/rss/index.xml",
         "wired": "https://www.wired.com/feed/rss",
-        "theverge": "https://www.theverge.com/rss/index.xml",
+        "ars": "https://feeds.arstechnica.com/arstechnica/index",
+        "reuters": "https://www.reutersagency.com/feed/?best-topics=tech",
+        "bloomberg": "https://feeds.bloomberg.com/markets/news.rss",
+        "wsj": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
     }
     
-    def __init__(self, timeout: int = 30):
-        self.timeout = timeout
+    def __init__(self):
+        self.articles = []
     
-    async def fetch_feed(self, source: str) -> list[NewsArticle]:
-        """Fetch articles from a specific source"""
-        if source not in self.FEEDS:
-            raise ValueError(f"Unknown source: {source}")
+    async def fetch_feed(self, name: str, url: str) -> list[Article]:
+        """Fetch single feed"""
+        print(f"Fetching {name}...")
         
-        feed_url = self.FEEDS[source]
-        
-        # Parse synchronously (feedparser is blocking)
-        loop = asyncio.get_event_loop()
-        feed = await loop.run_in_executor(None, feedparser.parse, feed_url)
-        
-        articles = []
-        for entry in feed.entries[:25]:  # Limit to 25
-            articles.append(NewsArticle(
-                title=entry.get("title", ""),
-                summary=entry.get("summary", ""),
-                link=entry.get("link", ""),
-                published=entry.get("published", ""),
-                source=source
-            ))
-        
-        return articles
+        try:
+            feed = feedparser.parse(url)
+            
+            articles = []
+            for entry in feed.entries[:20]:  # Limit to 20 per feed
+                article = Article(
+                    title=entry.get("title", ""),
+                    link=entry.get("link", ""),
+                    published=entry.get("published", ""),
+                    summary=entry.get("summary", ""),
+                    source=name,
+                    author=entry.get("author", "")
+                )
+                articles.append(article)
+            
+            print(f"  Got {len(articles)} articles")
+            return articles
+        except Exception as e:
+            print(f"  Error: {e}")
+            return []
     
-    async def fetch_all(self) -> list[NewsArticle]:
-        """Fetch from all sources"""
-        tasks = [self.fetch_feed(source) for source in self.FEEDS]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    async def fetch_all(self) -> list[Article]:
+        """Fetch all feeds"""
+        tasks = [
+            self.fetch_feed(name, url) 
+            for name, url in self.FEEDS.items()
+        ]
         
-        articles = []
-        for result in results:
-            if isinstance(result, list):
-                articles.extend(result)
+        results = await asyncio.gather(*tasks)
         
-        return articles
+        all_articles = []
+        for articles in results:
+            all_articles.extend(articles)
+        
+        # Sort by published date
+        all_articles.sort(
+            key=lambda a: a.published, 
+            reverse=True
+        )
+        
+        self.articles = all_articles
+        return all_articles
     
-    async def search(self, query: str) -> list[NewsArticle]:
-        """Search all feeds for query"""
-        all_articles = await self.fetch_all()
-        
-        query_lower = query.lower()
+    def get_by_source(self, source: str) -> list[Article]:
+        """Get articles by source"""
+        return [a for a in self.articles if a.source == source]
+    
+    def search(self, query: str) -> list[Article]:
+        """Search articles"""
+        query = query.lower()
         return [
-            a for a in all_articles 
-            if query_lower in a.title.lower() or query_lower in a.summary.lower()
+            a for a in self.articles 
+            if query in a.title.lower() or query in a.summary.lower()
         ]
 
 
-async def fetch_news(source: str = "all") -> list[NewsArticle]:
-    """Convenience function"""
-    scraper = RSSScraper()
+async def main():
+    """Main function"""
+    aggregator = RSSAggregator()
+    articles = await aggregator.fetch_all()
     
-    if source == "all":
-        return await scraper.fetch_all()
-    else:
-        return await scraper.fetch_feed(source)
+    print(f"\nTotal: {len(articles)} articles")
+    
+    # Search examples
+    print("\nSearching for 'AI':")
+    for article in aggregator.search("AI")[:5]:
+        print(f"  - {article.title}")
+    
+    print("\nSearching for 'startup':")
+    for article in aggregator.search("startup")[:5]:
+        print(f"  - {article.title}")
 
 
 if __name__ == "__main__":
-    import json
-    
-    async def main():
-        print("Fetching news...")
-        articles = await fetch_news()
-        
-        print(f"Found {len(articles)} articles:")
-        for a in articles[:10]:
-            print(f"  - {a.title[:60]}... ({a.source})")
-        
-        with open("data/news.json", "w") as f:
-            json.dump([a.to_dict() for a in articles], f, indent=2)
-    
     asyncio.run(main())
